@@ -1,76 +1,60 @@
-import { Request, Response } from "express";
 import Stripe from "stripe";
 import "dotenv/config";
-
 import prisma from "../lib/prisma.js";
 import { model } from "../lib/gemini.js"; // Changed from openai to gemini
-
 // Get the user credits
-export const getUserCredits = async (req: Request, res: Response) => {
+export const getUserCredits = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
         const user = await prisma.user.findUnique({
             where: {
                 id: userId,
             },
         });
-
         if (!user) {
             return res.status(404).json({ message: "User Not Found" });
         }
-
         return res.json({ credits: user?.credits }); // Added return
-    } catch (error: any) {
-        console.error(
-            "Error in getUserCredits controller",
-            error.message || error.code
-        );
+    }
+    catch (error) {
+        console.error("Error in getUserCredits controller", error.message || error.code);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Create a new project
-export const createUserProject = async (req: Request, res: Response) => {
+export const createUserProject = async (req, res) => {
     const userId = req.userId;
     try {
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
         const { initial_prompt } = req.body;
-
         const user = await prisma.user.findUnique({
             where: {
                 id: userId,
             },
         });
-
         if (!user) {
             return res.status(404).json({ message: "User Not Found" });
         }
-
         if (user && user.credits < 5) {
             return res
                 .status(403)
                 .json({ message: "Add more credits to create a project" });
         }
-
         // Create a new project
         const project = await prisma.websiteProject.create({
             data: {
-                name:
-                    initial_prompt.length > 50
-                        ? initial_prompt.substring(0, 47) + "..."
-                        : initial_prompt,
+                name: initial_prompt.length > 50
+                    ? initial_prompt.substring(0, 47) + "..."
+                    : initial_prompt,
                 initial_prompt,
                 userId,
             },
         });
-
         // Update users total creation
         await prisma.user.update({
             where: {
@@ -82,7 +66,6 @@ export const createUserProject = async (req: Request, res: Response) => {
                 },
             },
         });
-
         await prisma.conversation.create({
             data: {
                 role: "user",
@@ -90,7 +73,6 @@ export const createUserProject = async (req: Request, res: Response) => {
                 projectId: project.id,
             },
         });
-
         await prisma.user.update({
             where: {
                 id: userId,
@@ -101,7 +83,6 @@ export const createUserProject = async (req: Request, res: Response) => {
                 },
             },
         });
-
         // ✅ ENHANCE USER PROMPT WITH GEMINI
         let enhancedPrompt = initial_prompt;
         try {
@@ -120,12 +101,11 @@ export const createUserProject = async (req: Request, res: Response) => {
                 
                 User's request: "${initial_prompt}"
             `);
-
             enhancedPrompt = promptEnhanceResult.response.text().trim() || initial_prompt;
-        } catch (error: any) {
+        }
+        catch (error) {
             console.log("Gemini enhancement failed, using original prompt:", error.message);
         }
-
         await prisma.conversation.create({
             data: {
                 role: "assistant",
@@ -133,7 +113,6 @@ export const createUserProject = async (req: Request, res: Response) => {
                 projectId: project.id,
             },
         });
-
         await prisma.conversation.create({
             data: {
                 role: "assistant",
@@ -141,7 +120,6 @@ export const createUserProject = async (req: Request, res: Response) => {
                 projectId: project.id,
             },
         });
-
         // ✅ GENERATE WEBSITE CODE WITH GEMINI
         let code = "";
         try {
@@ -170,17 +148,14 @@ export const createUserProject = async (req: Request, res: Response) => {
 
                 The HTML should be complete and ready to render as-is with Tailwind CSS.
             `);
-
             code = codeGenerationResult.response.text().trim();
-            
             // Clean up any markdown code blocks if they appear
             code = code.replace(/```html\n?/gi, "").replace(/```\n?/gi, "").trim();
-            
-        } catch (error: any) {
+        }
+        catch (error) {
             console.log("Gemini code generation failed, using fallback:", error.message);
             code = getFallbackHTML(initial_prompt, enhancedPrompt);
         }
-
         if (!code) {
             await prisma.conversation.create({
                 data: {
@@ -189,7 +164,6 @@ export const createUserProject = async (req: Request, res: Response) => {
                     projectId: project.id,
                 },
             });
-
             await prisma.user.update({
                 where: {
                     id: userId,
@@ -200,10 +174,8 @@ export const createUserProject = async (req: Request, res: Response) => {
                     },
                 },
             });
-
             return res.status(500).json({ message: "Failed to generate code" });
         }
-
         // Create version for the project
         const version = await prisma.version.create({
             data: {
@@ -212,16 +184,13 @@ export const createUserProject = async (req: Request, res: Response) => {
                 projectId: project.id,
             },
         });
-
         await prisma.conversation.create({
             data: {
                 role: "assistant",
-                content:
-                    "I have created your website! You can now preview it and request any changes.",
+                content: "I have created your website! You can now preview it and request any changes.",
                 projectId: project.id,
             },
         });
-
         await prisma.websiteProject.update({
             where: {
                 id: project.id,
@@ -231,11 +200,10 @@ export const createUserProject = async (req: Request, res: Response) => {
                 current_version_index: version.id,
             },
         });
-
         // ✅ MOVED RESPONSE TO THE END
         return res.json({ projectId: project.id });
-
-    } catch (error: any) {
+    }
+    catch (error) {
         // Refund credits if something fails
         if (userId) {
             await prisma.user.update({
@@ -249,30 +217,21 @@ export const createUserProject = async (req: Request, res: Response) => {
                 },
             });
         }
-
-        console.error(
-            "Error in createUserProject controller",
-            error.message || error.code
-        );
-
+        console.error("Error in createUserProject controller", error.message || error.code);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Get a single user project
-export const getUserProject = async (req: Request, res: Response) => {
+export const getUserProject = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
-        const projectId = req.params.projectId as string;
-
+        const projectId = req.params.projectId;
         if (!projectId) {
             return res.status(400).json({ message: "Project ID is required" });
         }
-
         const project = await prisma.websiteProject.findUnique({
             where: {
                 id: projectId,
@@ -291,26 +250,23 @@ export const getUserProject = async (req: Request, res: Response) => {
                 },
             },
         });
-
         if (!project) {
             return res.status(404).json({ message: "Project not found" });
         }
-
         return res.json({ project }); // Added return
-    } catch (error: any) {
+    }
+    catch (error) {
         console.error("Error in getUserProject controller", error);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Get all user projects
-export const getUserProjects = async (req: Request, res: Response) => {
+export const getUserProjects = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
         const projects = await prisma.websiteProject.findMany({
             where: {
                 userId,
@@ -319,39 +275,33 @@ export const getUserProjects = async (req: Request, res: Response) => {
                 updatedAt: "desc",
             },
         });
-
         return res.json({ projects }); // Added return
-    } catch (error: any) {
+    }
+    catch (error) {
         console.error("Error in getUserProjects controller", error);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Toggle project publish
-export const togglePublish = async (req: Request, res: Response) => {
+export const togglePublish = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
-        const projectId = req.params.projectId as string;
-
+        const projectId = req.params.projectId;
         if (!projectId) {
             return res.status(400).json({ message: "Project ID is required" });
         }
-
         const project = await prisma.websiteProject.findUnique({
             where: {
                 id: projectId,
                 userId,
             },
         });
-
         if (!project) {
             return res.status(404).json({ message: "Project not found" });
         }
-
         await prisma.websiteProject.update({
             where: {
                 id: projectId,
@@ -360,56 +310,44 @@ export const togglePublish = async (req: Request, res: Response) => {
                 isPublished: !project.isPublished,
             },
         });
-
-        return res.json({ // Added return
+        return res.json({
             message: project.isPublished
                 ? "Project Unpublished"
                 : "Project Published",
         });
-    } catch (error: any) {
+    }
+    catch (error) {
         console.error("Error in togglePublish controller", error);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // To purchase credits
-export const purchaseCredits = async (req: Request, res: Response) => {
+export const purchaseCredits = async (req, res) => {
     try {
-        interface Plan {
-            credits: number;
-            amount: number;
-        }
-
         const plans = {
             basic: { credits: 100, amount: 5 },
             pro: { credits: 400, amount: 19 },
             enterprise: { credits: 1000, amount: 49 },
         };
-
         const userId = req.userId;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
-        const { planId } = req.body as { planId: keyof typeof plans };
-        const origin = req.headers.origin as string;
-
-        const plan: Plan = plans[planId];
+        const { planId } = req.body;
+        const origin = req.headers.origin;
+        const plan = plans[planId];
         if (!plan) {
             return res.status(400).json({ message: "Plan not found" });
         }
-
         const transaction = await prisma.transaction.create({
             data: {
-                userId: userId!,
+                userId: userId,
                 planId: req.body.planId,
                 amount: plan.amount,
                 credits: plan.credits,
             },
         });
-
-        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
-
+        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
         const session = await stripe.checkout.sessions.create({
             success_url: `${origin}/loading`,
             cancel_url: `${origin}`,
@@ -432,19 +370,18 @@ export const purchaseCredits = async (req: Request, res: Response) => {
             },
             expires_at: Math.floor(Date.now() / 1000) + 30 * 60, // Expires in 30 minutes
         });
-
         if (!session.url) {
             return res.status(500).json({ message: "Failed to create checkout session" });
         }
         return res.json({ payment_link: session.url }); // Added return
-    } catch (error: any) {
+    }
+    catch (error) {
         console.error("Error in purchaseCredits controller", error);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Helper function for fallback HTML
-function getFallbackHTML(originalPrompt: string, enhancedPrompt: string): string {
+function getFallbackHTML(originalPrompt, enhancedPrompt) {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>

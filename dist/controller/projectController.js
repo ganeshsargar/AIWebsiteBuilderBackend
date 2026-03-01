@@ -1,43 +1,32 @@
-import { Request, Response } from "express";
-
 import prisma from "../lib/prisma.js";
 import { model } from "../lib/gemini.js"; // Changed from openai to gemini
-import { role } from "better-auth/plugins";
-
 // To make revisions
-export const makeRevision = async (req: Request, res: Response) => {
+export const makeRevision = async (req, res) => {
     const userId = req.userId;
-
     try {
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
-        const projectId  = req.params.projectId as string;
+        const projectId = req.params.projectId;
         const { message } = req.body;
-
         const user = await prisma.user.findUnique({
             where: {
                 id: userId,
             },
         });
-
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
-
         if (user.credits < 5) {
             return res
                 .status(403)
                 .json({ message: "Add more credits to make changes" });
         }
-
         if (!message || message.trim() === "") {
             return res
                 .status(400)
                 .json({ message: "Please enter a valid prompt" });
         }
-
         const currentProject = await prisma.websiteProject.findUnique({
             where: {
                 id: projectId,
@@ -47,11 +36,9 @@ export const makeRevision = async (req: Request, res: Response) => {
                 versions: true,
             },
         });
-
         if (!currentProject) {
             return res.status(404).json({ message: "Project not found" });
         }
-
         await prisma.conversation.create({
             data: {
                 role: "user",
@@ -59,7 +46,6 @@ export const makeRevision = async (req: Request, res: Response) => {
                 projectId,
             },
         });
-
         await prisma.user.update({
             where: {
                 id: userId,
@@ -70,7 +56,6 @@ export const makeRevision = async (req: Request, res: Response) => {
                 },
             },
         });
-
         // ✅ ENHANCE USER PROMPT WITH GEMINI
         let enhancedPrompt = message;
         try {
@@ -87,12 +72,11 @@ export const makeRevision = async (req: Request, res: Response) => {
                 
                 User's request: "${message}"
             `);
-
             enhancedPrompt = promptEnhanceResult.response.text().trim() || message;
-        } catch (error: any) {
+        }
+        catch (error) {
             console.log("Gemini enhancement failed, using original prompt:", error.message);
         }
-
         await prisma.conversation.create({
             data: {
                 role: "assistant",
@@ -100,7 +84,6 @@ export const makeRevision = async (req: Request, res: Response) => {
                 projectId,
             },
         });
-
         await prisma.conversation.create({
             data: {
                 role: "assistant",
@@ -108,7 +91,6 @@ export const makeRevision = async (req: Request, res: Response) => {
                 projectId,
             },
         });
-
         // ✅ GENERATE WEBSITE CODE WITH GEMINI
         let code = "";
         try {
@@ -129,18 +111,14 @@ export const makeRevision = async (req: Request, res: Response) => {
                 
                 The user wants these changes: "${enhancedPrompt}"
             `);
-
             code = codeGenerationResult.response.text().trim();
-            
             // Clean up any markdown code blocks if they appear
             code = code.replace(/```html\n?/gi, "").replace(/```\n?/gi, "").trim();
-            
-        } catch (error: any) {
+        }
+        catch (error) {
             console.log("Gemini code generation failed:", error.message);
-            
             // Fallback - return the original code if generation fails
             code = currentProject.current_code || "";
-            
             if (!code) {
                 await prisma.conversation.create({
                     data: {
@@ -149,7 +127,6 @@ export const makeRevision = async (req: Request, res: Response) => {
                         projectId,
                     },
                 });
-
                 await prisma.user.update({
                     where: {
                         id: userId,
@@ -160,11 +137,9 @@ export const makeRevision = async (req: Request, res: Response) => {
                         },
                     },
                 });
-
                 return res.status(500).json({ message: "Failed to generate code" });
             }
         }
-
         if (!code) {
             await prisma.conversation.create({
                 data: {
@@ -173,7 +148,6 @@ export const makeRevision = async (req: Request, res: Response) => {
                     projectId,
                 },
             });
-
             await prisma.user.update({
                 where: {
                     id: userId,
@@ -184,10 +158,8 @@ export const makeRevision = async (req: Request, res: Response) => {
                     },
                 },
             });
-
             return res.status(500).json({ message: "Failed to generate code" });
         }
-
         const version = await prisma.version.create({
             data: {
                 code: code,
@@ -195,16 +167,13 @@ export const makeRevision = async (req: Request, res: Response) => {
                 projectId,
             },
         });
-
         await prisma.conversation.create({
             data: {
                 role: "assistant",
-                content:
-                    "I have made changes to your website! You can now preview it.",
+                content: "I have made changes to your website! You can now preview it.",
                 projectId,
             },
         });
-
         await prisma.websiteProject.update({
             where: {
                 id: projectId,
@@ -214,9 +183,9 @@ export const makeRevision = async (req: Request, res: Response) => {
                 current_version_index: version.id,
             },
         });
-
         return res.json({ message: "Changes made successfully" }); // Added return
-    } catch (error: any) {
+    }
+    catch (error) {
         if (userId) {
             await prisma.user.update({
                 where: {
@@ -229,32 +198,24 @@ export const makeRevision = async (req: Request, res: Response) => {
                 },
             });
         }
-
-        console.error(
-            "Error in makeRevision controller",
-            error.message || error.code
-        );
-
+        console.error("Error in makeRevision controller", error.message || error.code);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Rollback to specific version
-export const rollbackToVersion = async (req: Request, res: Response) => {
+export const rollbackToVersion = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
-        const projectId = req.params.projectId as string;
-        const versionId = req.params.versionId as string;
+        const projectId = req.params.projectId;
+        const versionId = req.params.versionId;
         if (!projectId || !versionId) {
             return res
                 .status(400)
                 .json({ message: "Missing project ID or version ID" });
         }
-
         const project = await prisma.websiteProject.findUnique({
             where: {
                 id: projectId,
@@ -264,19 +225,13 @@ export const rollbackToVersion = async (req: Request, res: Response) => {
                 versions: true,
             },
         });
-
         if (!project) {
             return res.status(404).json({ message: "Project not found" });
         }
-
-        const version = project.versions.find(
-            (version) => version.id === versionId
-        );
-
+        const version = project.versions.find((version) => version.id === versionId);
         if (!version) {
             return res.status(404).json({ message: "Version not found" });
         }
-
         await prisma.websiteProject.update({
             where: {
                 id: projectId,
@@ -287,82 +242,64 @@ export const rollbackToVersion = async (req: Request, res: Response) => {
                 current_version_index: version.id,
             },
         });
-
         await prisma.conversation.create({
             data: {
                 role: "assistant",
-                content:
-                    "I have rolled back your website to the specified version. You can now preview it.",
+                content: "I have rolled back your website to the specified version. You can now preview it.",
                 projectId,
             },
         });
-
         return res.json({ message: "Version rolled back successfully" }); // Added return
-    } catch (error: any) {
-        console.error(
-            "Error in rollbackToVersion controller",
-            error.message || error.code
-        );
-
+    }
+    catch (error) {
+        console.error("Error in rollbackToVersion controller", error.message || error.code);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Delete a project
-export const deleteProject = async (req: Request, res: Response) => {
+export const deleteProject = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
-        const projectId = req.params.projectId as string;
+        const projectId = req.params.projectId;
         if (!projectId) {
             return res.status(400).json({ message: "Missing project ID" });
         }
-
         const project = await prisma.websiteProject.findUnique({
             where: {
                 id: projectId,
                 userId,
             },
         });
-
         if (!project) {
             return res.status(404).json({ message: "Project not found" });
         }
-
         await prisma.websiteProject.delete({
             where: {
                 id: projectId,
                 userId,
             },
         });
-
         return res.json({ message: "Project deleted successfully" }); // Added return
-    } catch (error: any) {
-        console.error(
-            "Error in deleteProject controller",
-            error.message || error.code
-        );
-
+    }
+    catch (error) {
+        console.error("Error in deleteProject controller", error.message || error.code);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Getting project code for preview
-export const getProjectPreview = async (req: Request, res: Response) => {
+export const getProjectPreview = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
-        const projectId = req.params.projectId as string;
+        const projectId = req.params.projectId;
         if (!projectId) {
             return res.status(400).json({ message: "Missing project ID" });
         }
-
         const project = await prisma.websiteProject.findFirst({
             where: {
                 id: projectId,
@@ -372,24 +309,18 @@ export const getProjectPreview = async (req: Request, res: Response) => {
                 versions: true,
             },
         });
-
         if (!project) {
             return res.status(404).json({ message: "Project not found" });
         }
-
         return res.json({ project }); // Added return
-    } catch (error: any) {
-        console.error(
-            "Error in getProjectPreview controller",
-            error.message || error.code
-        );
-
+    }
+    catch (error) {
+        console.error("Error in getProjectPreview controller", error.message || error.code);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Get published projects
-export const getPublishedProjects = async (req: Request, res: Response) => {
+export const getPublishedProjects = async (req, res) => {
     try {
         const projects = await prisma.websiteProject.findMany({
             where: {
@@ -399,80 +330,61 @@ export const getPublishedProjects = async (req: Request, res: Response) => {
                 user: true,
             },
         });
-
         return res.json({ projects }); // Added return
-    } catch (error: any) {
-        console.error(
-            "Error in getPublishedProjects controller",
-            error.message || error.code
-        );
-
+    }
+    catch (error) {
+        console.error("Error in getPublishedProjects controller", error.message || error.code);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Get a single project by id
-export const getProjectById = async (req: Request, res: Response) => {
+export const getProjectById = async (req, res) => {
     try {
-        const projectId = req.params.projectId as string;
+        const projectId = req.params.projectId;
         if (!projectId) {
             return res.status(400).json({ message: "Missing project ID" });
         }
-
         const project = await prisma.websiteProject.findFirst({
             where: {
                 id: projectId,
             },
         });
-
-        if (
-            !project ||
+        if (!project ||
             project.isPublished === false ||
-            !project?.current_code
-        ) {
+            !project?.current_code) {
             return res.status(404).json({ message: "Project not found" });
         }
-
         return res.json({ code: project.current_code }); // Added return
-    } catch (error: any) {
-        console.error(
-            "Error in getProjectById controller",
-            error.message || error.code
-        );
-
+    }
+    catch (error) {
+        console.error("Error in getProjectById controller", error.message || error.code);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
-
 // Save project code
-export const saveProjectCode = async (req: Request, res: Response) => {
+export const saveProjectCode = async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
             return res.status(401).json({ message: "Unauthorized" });
         }
-
-        const projectId = req.params.projectId as string;
+        const projectId = req.params.projectId;
         if (!projectId) {
             return res.status(400).json({ message: "Missing project ID" });
         }
-
         const { code } = req.body;
         if (!code) {
             return res.status(400).json({ message: "Missing code" });
         }
-
         const project = await prisma.websiteProject.findUnique({
             where: {
                 id: projectId,
                 userId,
             },
         });
-
         if (!project) {
             return res.status(404).json({ message: "Project not found" });
         }
-
         await prisma.websiteProject.update({
             where: {
                 id: projectId,
@@ -482,14 +394,10 @@ export const saveProjectCode = async (req: Request, res: Response) => {
                 current_version_index: "",
             },
         });
-
         return res.json({ message: "Code saved successfully" }); // Added return
-    } catch (error: any) {
-        console.error(
-            "Error in saveProjectCode controller",
-            error.message || error.code
-        );
-
+    }
+    catch (error) {
+        console.error("Error in saveProjectCode controller", error.message || error.code);
         return res.status(500).json({ message: error.message || error.code });
     }
 };
